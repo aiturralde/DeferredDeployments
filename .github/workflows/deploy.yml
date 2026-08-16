@@ -1,0 +1,83 @@
+name: Deploy
+
+on:
+  workflow_call:
+    inputs:
+      issue_number:
+        required: true
+        type: number
+      sha:
+        required: true
+        type: string
+      environment:
+        required: true
+        type: string
+      deploy_date:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    # Expressions are allowed here, which is what lets one workflow serve both approval paths.
+    environment:
+      name: ${{ inputs.environment }}
+    concurrency:
+      group: deploy-issue-${{ inputs.issue_number }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha }}
+
+      - name: Verify the approved commit is what got checked out
+        env:
+          DEPLOY_SHA: ${{ inputs.sha }}
+          DEPLOY_ENV: ${{ inputs.environment }}
+          DEPLOY_DATE: ${{ inputs.deploy_date }}
+        run: |
+          actual="$(git rev-parse HEAD)"
+          if [ "$actual" != "$DEPLOY_SHA" ]; then
+            echo "::error::Expected $DEPLOY_SHA but checked out $actual"
+            exit 1
+          fi
+          echo "Deploying $actual to $DEPLOY_ENV for $DEPLOY_DATE"
+
+      - name: Deploy
+        run: |
+          echo "TODO: replace with the real deployment commands."
+
+      - uses: actions/github-script@v7
+        if: always()
+        env:
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          DEPLOY_SHA: ${{ inputs.sha }}
+          DEPLOY_ENV: ${{ inputs.environment }}
+          JOB_STATUS: ${{ job.status }}
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const issue_number = Number(process.env.ISSUE_NUMBER);
+            const sha = process.env.DEPLOY_SHA;
+            const environment = process.env.DEPLOY_ENV;
+            const success = process.env.JOB_STATUS === 'success';
+            const run = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+
+            await github.rest.issues.createComment({
+              owner, repo, issue_number,
+              body: success
+                ? `Deployed \`${sha}\` to \`${environment}\`. [View run](${run})`
+                : `Deployment of \`${sha}\` to \`${environment}\` **failed**. [View run](${run})`,
+            });
+
+            await github.rest.issues.addLabels({
+              owner, repo, issue_number, labels: [success ? 'deployed' : 'deployment-failed'],
+            });
+
+            if (success) {
+              await github.rest.issues.update({ owner, repo, issue_number, state: 'closed', state_reason: 'completed' });
+            }

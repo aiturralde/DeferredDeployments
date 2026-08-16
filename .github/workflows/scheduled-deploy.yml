@@ -1,0 +1,87 @@
+name: Scheduled deployment
+
+on:
+  schedule:
+    # 05:00 UTC — early morning in Europe/Madrid. GitHub cron is best-effort and may run late.
+    - cron: '0 5 * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: List the deployments that are due without running them.
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.due.outputs.matrix }}
+      count: ${{ steps.due.outputs.count }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: due
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const lib = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/deployment-issue.js`);
+            const { owner, repo } = context.repo;
+            const today = lib.todayInTz();
+
+            const issues = await github.paginate(github.rest.issues.listForRepo, {
+              owner, repo, state: 'open', labels: 'deployment-request,merged', per_page: 100,
+            });
+
+            const due = [];
+            for (const issue of issues) {
+              const names = issue.labels.map(l => l.name || l);
+              if (names.includes('pending-details') || names.includes('deployed')) continue;
+
+              const check = lib.validateRequest(issue.body, today);
+              if (!check.valid || check.date.date !== today) continue;
+
+              const comments = await github.paginate(github.rest.issues.listComments, {
+                owner, repo, issue_number: issue.number, per_page: 100,
+              });
+              const record = comments.find(c => c.body.includes(lib.MERGE_SHA_MARKER));
+              const sha = record && record.body.match(/`([0-9a-f]{40})`/);
+              if (!sha) {
+                core.warning(`Issue #${issue.number} is due but has no recorded merge commit; skipping.`);
+                continue;
+              }
+
+              due.push({
+                issue_number: issue.number,
+                sha: sha[1],
+                environment: check.date.environment,
+                deploy_date: check.date.date,
+              });
+            }
+
+            core.summary.addHeading(`Deployments due on ${today}`, 3);
+            core.summary.addRaw(due.length
+              ? due.map(d => `- #${d.issue_number} → \`${d.environment}\` @ \`${d.sha.slice(0, 7)}\``).join('\n')
+              : '_Nothing due today._');
+            await core.summary.write();
+
+            core.setOutput('matrix', JSON.stringify(due));
+            core.setOutput('count', String(due.length));
+
+  deploy:
+    needs: collect
+    if: needs.collect.outputs.count != '0' && !inputs.dry_run
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.collect.outputs.matrix) }}
+    uses: ./.github/workflows/deploy.yml
+    with:
+      issue_number: ${{ matrix.issue_number }}
+      sha: ${{ matrix.sha }}
+      environment: ${{ matrix.environment }}
+      deploy_date: ${{ matrix.deploy_date }}
+    secrets: inherit

@@ -1,0 +1,50 @@
+name: Deployment request
+description: Schedule the deployment of a merged pull request.
+title: "Deployment request for PR #"
+labels: ["deployment-request", "pending-details"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This issue schedules the deployment. A **Saturday or Sunday** date (Europe/Madrid)
+        requires approval from the repository owner; a weekday date deploys without a gate.
+  - type: input
+    id: pr
+    attributes:
+      label: Pull Request number
+      description: The pull request this deployment ships.
+      placeholder: "123"
+    validations:
+      required: true
+  - type: input
+    id: deploy_date
+    attributes:
+      label: Deployment date (YYYY-MM-DD)
+      description: The day the deployment should run, in the Europe/Madrid timezone.
+      placeholder: "2026-08-17"
+    validations:
+      required: true
+  - type: textarea
+    id: summary
+    attributes:
+      label: What is being deployed?
+      description: Summarise the change, the affected services, and any migrations or config updates.
+    validations:
+      required: true
+  - type: dropdown
+    id: risk
+    attributes:
+      label: Risk level
+      options:
+        - low
+        - medium
+        - high
+    validations:
+      required: true
+  - type: textarea
+    id: rollback
+    attributes:
+      label: Rollback plan
+      description: How to revert if the deployment fails.
+    validations:
+      required: true
