@@ -64,6 +64,7 @@ flowchart TD
 | `.github/workflows/scheduled-deploy.yml`           | Sondeo diario que localiza los despliegues previstos para hoy.   |
 | `.github/workflows/deploy.yml`                     | Trabajo de despliegue reutilizable con la barrera dinámica.      |
 | `.github/workflows/tests.yml`                      | Ejecuta las pruebas unitarias.                                   |
+| `.github/ruleset.json`                             | Definición del ruleset de `main`, aplicada con la CLI de GitHub. |
 
 ### `deployment-issue.js`
 
@@ -117,13 +118,33 @@ repositorio.
   rama de despliegue a `main`.
 - `production` — créalo **sin** revisores.
 
-**Conjunto de reglas** — Settings → Rules → Rulesets, aplicado a `main`:
+**Conjunto de reglas (ruleset)** — la definición está en `.github/ruleset.json`. Aplícala con la
+CLI de GitHub:
 
-- Exigir una pull request antes de fusionar.
-- Exigir la comprobación de estado `deployment-request/validated`.
+```bash
+gh auth login
+gh api --method POST repos/aiturralde/DeferredDeployments/rulesets --input .github/ruleset.json
+```
+
+Comprueba el resultado:
+
+```bash
+gh api repos/aiturralde/DeferredDeployments/rulesets --jq '.[] | "\(.id)  \(.name)  \(.enforcement)"'
+```
+
+Se aplica a la rama por defecto e impone: prohibido borrarla, prohibido el force push, una pull
+request con una aprobación y la comprobación `deployment-request/validated`. Lo mismo puede
+configurarse a mano en Settings → Rules → Rulesets.
+
+El archivo es un registro de la configuración deseada, no un vínculo activo: GitHub no lo lee
+desde el repositorio. Si lo editas, vuelve a aplicarlo con `PUT .../rulesets/<id>`, usando el id
+que devuelve el comando anterior.
 
 > Mientras no exista el conjunto de reglas, la solicitud de despliegue es solo informativa: la
 > comprobación se publica, pero nada impide la fusión.
+
+> El ruleset no tiene lista de excepciones, así que también te afecta a ti. Añade *Repository
+> admin* a la **Bypass list** desde la interfaz web si quieres una vía de escape de emergencia.
 
 **Comandos de despliegue** — `deploy.yml` ejecuta actualmente un paso `Deploy` de marcador de
 posición. Sustitúyelo por los comandos reales. El trabajo ya verifica que el commit descargado

@@ -62,6 +62,7 @@ flowchart TD
 | `.github/workflows/scheduled-deploy.yml`          | Daily poller that finds deployments due today.                  |
 | `.github/workflows/deploy.yml`                    | Reusable deployment job with the dynamic approval gate.         |
 | `.github/workflows/tests.yml`                     | Runs the unit tests.                                            |
+| `.github/ruleset.json`                            | Branch ruleset definition for `main`, applied with the GitHub CLI. |
 
 ### `deployment-issue.js`
 
@@ -114,13 +115,32 @@ These cannot be configured from code and must be done in the repository settings
   deployment branch to `main`.
 - `production` — create it with **no** reviewers.
 
-**Ruleset** — Settings → Rules → Rulesets, targeting `main`:
+**Ruleset** — the definition lives in `.github/ruleset.json`. Apply it with the GitHub CLI:
 
-- Require a pull request before merging.
-- Require the status check `deployment-request/validated`.
+```bash
+gh auth login
+gh api --method POST repos/aiturralde/DeferredDeployments/rulesets --input .github/ruleset.json
+```
+
+Check the result:
+
+```bash
+gh api repos/aiturralde/DeferredDeployments/rulesets --jq '.[] | "\(.id)  \(.name)  \(.enforcement)"'
+```
+
+It targets the default branch and enforces: no deletions, no force pushes, a pull request with
+one approval, and the `deployment-request/validated` status check. The same thing can be set up
+by hand under Settings → Rules → Rulesets.
+
+The file is a record of intent, not a live binding — GitHub does not read it from the
+repository. After editing it, re-apply with `PUT .../rulesets/<id>` using the id from the
+command above.
 
 > Until the ruleset exists the deployment request is advisory only: the status check reports,
 > but nothing prevents the merge.
+
+> The ruleset has no bypass list, so it applies to you as well. Add *Repository admin* to the
+> **Bypass list** in the web interface if you want an emergency override.
 
 **Deployment commands** — `deploy.yml` currently runs a placeholder `Deploy` step. Replace it
 with the real commands. The job already verifies that the checked-out commit matches the SHA
