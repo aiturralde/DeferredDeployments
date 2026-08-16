@@ -30,76 +30,104 @@ jobs:
             const prLabel = `pr-${pr.number}`;
             const COMMENT_MARKER = '<!-- deployment-request:pr-comment -->';
 
-            const open = await github.paginate(github.rest.issues.listForRepo, {
-              owner, repo, state: 'open', labels: `deployment-request,${prLabel}`, per_page: 100,
+            // Closed issues count too: the author may close the request before the PR merges.
+            const candidates = await github.paginate(github.rest.issues.listForRepo, {
+              owner, repo, state: 'all', labels: `deployment-request,${prLabel}`, per_page: 100,
             });
-            let issue = open.sort((a, b) => a.number - b.number)[0];
-
-            if (!issue) {
-              const created = await github.rest.issues.create({
-                owner, repo,
-                title: `Deployment request for PR #${pr.number}: ${pr.title}`,
-                body: `Tracking ${pr.html_url}\n\n${lib.renderBody({ pr: String(pr.number) })}`,
-                labels: ['deployment-request', 'pending-details', prLabel],
-              });
-              issue = created.data;
-              // Assignment is a separate call so a missing-permission failure cannot lose the issue.
-              try {
-                await github.rest.issues.addAssignees({
-                  owner, repo, issue_number: issue.number, assignees: [pr.user.login],
-                });
-              } catch (error) {
-                core.warning(`Could not assign @${pr.user.login}: ${error.message}`);
-              }
-            }
+            const issue = candidates
+              .filter(i => !i.pull_request)
+              .sort((a, b) => a.number - b.number)[0];
 
             if (pr.merged) {
-              const comments = await github.paginate(github.rest.issues.listComments, {
+              if (!issue) {
+                core.warning(`PR #${pr.number} was merged with no deployment request, so nothing will be deployed.`);
+                return;
+              }
+              const issueComments = await github.paginate(github.rest.issues.listComments, {
                 owner, repo, issue_number: issue.number, per_page: 100,
               });
-              const existing = comments.find(c => c.body.includes(lib.MERGE_SHA_MARKER));
-              const body = [
+              const existing = issueComments.find(c => c.body.includes(lib.MERGE_SHA_MARKER));
+              const record = [
                 lib.MERGE_SHA_MARKER,
                 `PR #${pr.number} was merged. The scheduled deployment will check out this exact commit:`,
                 '',
                 `\`${pr.merge_commit_sha}\``,
               ].join('\n');
               if (existing) {
-                await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+                await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body: record });
               } else {
-                await github.rest.issues.createComment({ owner, repo, issue_number: issue.number, body });
+                await github.rest.issues.createComment({ owner, repo, issue_number: issue.number, body: record });
               }
               await github.rest.issues.addLabels({
                 owner, repo, issue_number: issue.number, labels: ['merged'],
               });
+              // The poller only sees open issues, so a request closed early would never deploy.
+              const labels = issue.labels.map(l => l.name || l);
+              if (issue.state === 'closed' && !labels.includes('deployed')) {
+                await github.rest.issues.update({ owner, repo, issue_number: issue.number, state: 'open' });
+                await github.rest.issues.createComment({
+                  owner, repo, issue_number: issue.number,
+                  body: 'Reopened because the deployment has not run yet. It will close automatically once deployed.',
+                });
+              }
               return;
             }
 
-            const check = lib.validateRequest(issue.body);
             const prefill = new URLSearchParams({
               template: 'deployment-request.yml',
-              title: `Deployment request for PR #${pr.number}`,
+              title: `Deployment request for PR #${pr.number}: ${pr.title}`,
               pr: String(pr.number),
             });
             const formUrl = `${pr.base.repo.html_url}/issues/new?${prefill}`;
 
-            const lines = [
-              COMMENT_MARKER,
-              '### Deployment request required',
-              '',
-              `This PR targets \`main\`, so it needs a scheduled deployment date before it can merge.`,
-              '',
-              `**[➜ Open deployment request #${issue.number} and fill in the details](${issue.html_url})**`,
-              '',
-              check.valid
-                ? `Scheduled for **${check.date.date}** (${check.date.weekday}). ${check.date.isWeekend
-                    ? 'Weekend deployment — it will wait for approval from the repository owner.'
-                    : 'Weekday deployment — it will run without an approval gate.'}`
-                : ['Still missing:', '', ...check.errors.map(e => `- ${e}`)].join('\n'),
-              '',
-              `<sub>Prefer starting over? <a href="${formUrl}">Use the deployment request form</a>.</sub>`,
-            ];
-            const body = lines.join('\n');
+            let state, description, targetUrl, lines;
+
+            if (!issue) {
+              state = 'failure';
+              description = 'No deployment request yet - open the form';
+              targetUrl = formUrl;
+              lines = [
+                '### Deployment request required',
+                '',
+                'This PR targets `main`, so the deployment has to be scheduled before it can merge.',
+                '',
+                `## ➜ [Open the deployment request form](${formUrl})`,
+                '',
+                'The pull request number is already filled in. You will be asked for the deployment',
+                'date (`YYYY-MM-DD`), what you are deploying, and a rollback plan.',
+                '',
+                'A **weekend** date needs approval from the repository owner. A **weekday** date',
+                'deploys unattended.',
+              ];
+            } else {
+              const check = lib.validateRequest(issue.body);
+              state = check.valid ? 'success' : 'failure';
+              targetUrl = issue.html_url;
+              description = check.valid
+                ? `Scheduled for ${check.date.date} (${check.date.isWeekend ? 'weekend' : 'weekday'})`
+                : check.errors[0].replace(/[`*]/g, '').slice(0, 140);
+              lines = check.valid
+                ? [
+                    '### Deployment scheduled',
+                    '',
+                    `Tracked in #${issue.number} — **${check.date.date}** (${check.date.weekday}).`,
+                    '',
+                    check.date.isWeekend
+                      ? 'Weekend deployment: it will wait for approval from the repository owner.'
+                      : 'Weekday deployment: it will run without an approval gate.',
+                  ]
+                : [
+                    '### Deployment request incomplete',
+                    '',
+                    `Tracked in #${issue.number}. Edit that issue to fill in the missing parts:`,
+                    '',
+                    ...check.errors.map(e => `- ${e}`),
+                    '',
+                    `<sub>Prefer to start over? <a href="${formUrl}">Open a fresh form</a>.</sub>`,
+                  ];
+            }
+
+            const body = [COMMENT_MARKER, ...lines].join('\n');
 
             const comments = await github.paginate(github.rest.issues.listComments, {
               owner, repo, issue_number: pr.number, per_page: 100,
@@ -111,13 +139,13 @@ jobs:
               await github.rest.issues.createComment({ owner, repo, issue_number: pr.number, body });
             }
 
+            // target_url points at the form when nothing exists yet, so "Details" on the red
+            // check takes the author straight there.
             await github.rest.repos.createCommitStatus({
               owner, repo,
               sha: pr.head.sha,
               context: 'deployment-request/validated',
-              state: check.valid ? 'success' : 'failure',
-              target_url: issue.html_url,
-              description: check.valid
-                ? `Scheduled for ${check.date.date} (${check.date.isWeekend ? 'weekend' : 'weekday'})`
-                : check.errors[0].replace(/[`*]/g, '').slice(0, 140),
+              state,
+              target_url: targetUrl,
+              description,
             });
