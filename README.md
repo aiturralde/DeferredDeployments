@@ -49,8 +49,9 @@ flowchart TD
 4. **On merge, the merge commit SHA is recorded** as a comment on the issue. This is the exact
    commit that will later be deployed. A request closed before deploying is reopened here.
 5. **A daily poller runs the deployment.** `scheduled-deploy.yml` picks up merged, validated
-   requests whose date is today and calls `deploy.yml` with the matching environment. Weekend
-   deployments pause for approval; weekday deployments proceed.
+   requests whose date is today and calls `deploy.yml` with the matching environment. Each one
+   is labelled `deploying` first, so a request with a run already in flight is never dispatched
+   twice. Weekend deployments pause for approval; weekday deployments proceed.
 
 ## Repository layout
 
@@ -60,7 +61,7 @@ flowchart TD
 | `.github/scripts/deployment-issue.js`             | Issue parsing, date validation and the weekend rule.            |
 | `.github/scripts/deployment-issue.test.js`        | Unit tests for the above.                                       |
 | `.github/workflows/pr-deployment-request.yml`     | Posts the sticky comment, sets the status, records the merge SHA. |
-| `.github/workflows/validate-deployment-request.yml` | Re-validates on edit, labels, deduplicates.                   |
+| `.github/workflows/validate-deployment-request.yml` | Re-validates on edit, labels, deduplicates, cancels stale runs. |
 | `.github/workflows/scheduled-deploy.yml`          | Daily poller that finds deployments due today.                  |
 | `.github/workflows/deploy.yml`                    | Reusable deployment job with the dynamic approval gate.         |
 | `.github/workflows/tests.yml`                     | Runs the unit tests.                                            |
@@ -74,10 +75,12 @@ workflows import it, so the weekend rule cannot drift between them.
 | Export            | Behaviour                                                                        |
 | ----------------- | -------------------------------------------------------------------------------- |
 | `parseIssue`      | Turns the rendered form body into a field map, treating `_No response_` as empty. |
-| `renderBody`      | Produces a body with the same headings, used for auto-created issues.             |
+| `renderBody`      | Reference rendering of the form body. Used by the tests as a fixture builder.      |
 | `todayInTz`       | Today's date in `Europe/Madrid`.                                                  |
 | `classify`        | Validates a date and returns `isWeekend`, the target environment and the label.    |
 | `validateRequest` | Full check of a request, returning every problem at once.                         |
+| `renderRunRecord` | Comment recording which run was dispatched, and for which date.                    |
+| `parseRunRecord`  | Reads that comment back, so a stale run can be cancelled.                          |
 
 A date is rejected if it is not `YYYY-MM-DD`, is not a real calendar date (`2026-02-31`), or
 is in the past.
@@ -104,8 +107,9 @@ Labels are created automatically the first time they are applied.
 | `deploy-weekend`     | The date falls on a Saturday or Sunday.                     |
 | `deploy-weekday`     | The date falls Monday to Friday.                            |
 | `merged`             | The PR is merged and the commit SHA is recorded.            |
+| `deploying`          | A run has been dispatched and may still be awaiting approval. Blocks a second dispatch. |
 | `deployed`           | The deployment succeeded; the issue is closed.              |
-| `deployment-failed`  | The deployment ran but failed.                              |
+| `deployment-failed`  | The deployment ran but failed. The issue stays open.        |
 
 ## One-time setup
 
@@ -159,8 +163,12 @@ the SHA recorded at merge time, so a later merge to `main` cannot silently chang
 ## Day-to-day use
 
 **As a developer:** open your PR, click **Open the deployment request form** in the bot comment,
-submit it, and merge once the check turns green. To reschedule, edit the issue — validation
-re-runs automatically.
+submit it, and merge once the check turns green.
+
+**Rescheduling:** edit the issue and change the date. Validation re-runs on every edit, so the
+labels and the commit status update straight away and the poller will use the new date. If a run
+had already been dispatched for the old date — including one still waiting for approval — it is
+cancelled and the `deploying` label is cleared, so the same commit is never deployed twice.
 
 **As the approver:** weekend deployments appear as a pending review on the run for the
 `production-weekend` environment on the morning of the requested date. Approve it there.
@@ -184,6 +192,7 @@ Actions tab. Tick `dry_run` to list what is due without deploying anything.
 | The check stays red after fixing the issue     | The `pr` field does not match a real PR number, so the status cannot be published. |
 | No issue or comment appears on the PR          | The PR comes from a fork, which only gets a read-only token.                       |
 | A due deployment is skipped                    | The issue has no recorded merge SHA — the PR was not merged, or was merged before these workflows existed. |
+| A request never deploys and keeps `deploying`  | Its run is still waiting for approval, or the run was cancelled from the Actions tab without editing the issue. Remove the label to let the poller dispatch it again. |
 | The scheduled run does not start               | GitHub cron is best-effort and may run late; scheduled workflows are disabled after 60 days of inactivity. |
 | Two issues exist for one PR                    | Expected if the form was also filled manually. The newer one is closed as a duplicate automatically. |
 

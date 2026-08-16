@@ -14,6 +14,18 @@ const FIELDS = {
 };
 
 const MERGE_SHA_MARKER = '<!-- deployment-request:merge-sha -->';
+const RUN_MARKER = '<!-- deployment-request:run -->';
+
+function renderRunRecord(date, runId, runUrl) {
+  return `${RUN_MARKER}\nDeployment dispatched for \`${date}\` — run-id: \`${runId}\` ([view](${runUrl}))`;
+}
+
+function parseRunRecord(body) {
+  const text = String(body || '');
+  const date = text.match(/dispatched for `(\d{4}-\d{2}-\d{2})`/);
+  const runId = text.match(/run-id: `(\d+)`/);
+  return { date: date ? date[1] : null, runId: runId ? Number(runId[1]) : null };
+}
 
 function parseIssue(body) {
   const headingToKey = new Map(Object.entries(FIELDS).map(([key, label]) => [label.toLowerCase(), key]));
@@ -100,4 +112,16 @@ function validateRequest(body, today = todayInTz()) {
   return { values, date, pr: Number.isInteger(pr) && pr > 0 ? pr : null, errors, valid: errors.length === 0 };
 }
 
-module.exports = { FIELDS, TZ, MERGE_SHA_MARKER, parseIssue, renderBody, todayInTz, classify, validateRequest };
+module.exports = {
+  FIELDS,
+  TZ,
+  MERGE_SHA_MARKER,
+  RUN_MARKER,
+  renderRunRecord,
+  parseRunRecord,
+  parseIssue,
+  renderBody,
+  todayInTz,
+  classify,
+  validateRequest,
+};

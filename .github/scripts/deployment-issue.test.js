@@ -63,3 +63,17 @@ test('validateRequest accepts a fully populated request', () => {
   assert.equal(result.pr, 123);
   assert.equal(result.date.environment, 'production-weekend');
 });
+
+test('run records round-trip the dispatched date and run id', () => {
+  const body = lib.renderRunRecord('2026-08-17', 12345, 'https://example.test/run');
+  assert.ok(body.includes(lib.RUN_MARKER));
+  const parsed = lib.parseRunRecord(body);
+  assert.equal(parsed.date, '2026-08-17');
+  assert.equal(parsed.runId, 12345);
+});
+
+test('parseRunRecord returns nulls for unrelated comments', () => {
+  const parsed = lib.parseRunRecord('Deployed abc123 to production.');
+  assert.equal(parsed.date, null);
+  assert.equal(parsed.runId, null);
+});

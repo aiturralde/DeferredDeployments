@@ -5,6 +5,7 @@ on:
     types: [opened, edited, labeled]
 
 permissions:
+  actions: write
   contents: read
   issues: write
   pull-requests: read
@@ -71,6 +72,30 @@ jobs:
                 );
                 await github.rest.issues.update({ owner, repo, issue_number: issue.number, state: 'closed', state_reason: 'not_planned' });
                 return;
+              }
+            }
+
+            const labels = (issue.labels || []).map(l => l.name || l);
+            if (labels.includes('deploying')) {
+              const comments = await github.paginate(github.rest.issues.listComments, {
+                owner, repo, issue_number: issue.number, per_page: 100,
+              });
+              const record = [...comments].reverse().find(c => c.body.includes(lib.RUN_MARKER));
+              const dispatched = record ? lib.parseRunRecord(record.body) : { date: null, runId: null };
+              const newDate = check.valid ? check.date.date : null;
+
+              // A live run keeps the old date, so leaving it queued would deploy twice.
+              if (dispatched.runId && dispatched.date && newDate !== dispatched.date) {
+                try {
+                  await github.rest.actions.cancelWorkflowRun({ owner, repo, run_id: dispatched.runId });
+                } catch (error) {
+                  core.warning(`Could not cancel run ${dispatched.runId}: ${error.message}`);
+                }
+                await setLabel('deploying', false);
+                await github.rest.issues.createComment({
+                  owner, repo, issue_number: issue.number,
+                  body: `The deployment dispatched for \`${dispatched.date}\` was cancelled because the date changed${newDate ? ` to \`${newDate}\`` : ''}. Run \`${dispatched.runId}\` was stopped and this request will be picked up again on the new date.`,
+                });
               }
             }
 
