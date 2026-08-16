@@ -133,18 +133,26 @@ one approval, and the `deployment-request/validated` status check. The same thin
 by hand under Settings → Rules → Rulesets.
 
 The file is a record of intent, not a live binding — GitHub does not read it from the
-repository. After editing it, re-apply with `PUT .../rulesets/<id>` using the id from the
-command above.
+repository. It is currently applied as ruleset
+[`20913989`](https://github.com/aiturralde/DeferredDeployments/rules/20913989). After editing
+the file, re-apply it with:
+
+```bash
+gh api --method PUT repos/aiturralde/DeferredDeployments/rulesets/20913989 --input .github/ruleset.json
+```
 
 > Until the ruleset exists the deployment request is advisory only: the status check reports,
 > but nothing prevents the merge.
 
-> The ruleset has no bypass list, so it applies to you as well. Add *Repository admin* to the
-> **Bypass list** in the web interface if you want an emergency override.
+> The ruleset has no bypass list, so it applies to the repository owner as well. Because GitHub
+> does not let you approve your own pull request, **every merge to `main` needs an approval from
+> a second person**. To work solo, either set `required_approving_review_count` to `0` and
+> re-apply, or add *Repository admin* to the **Bypass list** in the web interface.
 
-**Deployment commands** — `deploy.yml` currently runs a placeholder `Deploy` step. Replace it
-with the real commands. The job already verifies that the checked-out commit matches the SHA
-recorded at merge time, so a later merge to `main` cannot silently change what ships.
+**Deployment commands** — this repository is a **demo**: the `Deploy` step in `deploy.yml` only
+writes a success notice to the run log, it does not deploy anything. To make it real, replace
+that step with the actual commands. The job already verifies that the checked-out commit matches
+the SHA recorded at merge time, so a later merge to `main` cannot silently change what ships.
 
 ## Day-to-day use
 

@@ -47,9 +47,15 @@ jobs:
           fi
           echo "Deploying $actual to $DEPLOY_ENV for $DEPLOY_DATE"
 
+      # Demo only: no real deployment is performed.
       - name: Deploy
+        env:
+          DEPLOY_SHA: ${{ inputs.sha }}
+          DEPLOY_ENV: ${{ inputs.environment }}
+          DEPLOY_DATE: ${{ inputs.deploy_date }}
         run: |
-          echo "TODO: replace with the real deployment commands."
+          echo "::notice title=Deployment succeeded::Commit $DEPLOY_SHA deployed to $DEPLOY_ENV on $DEPLOY_DATE"
+          echo "Deployment completed successfully."
 
       - uses: actions/github-script@v7
         if: always()
