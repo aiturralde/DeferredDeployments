@@ -15,37 +15,39 @@ then runs on that date, gated by who has to approve it.
 
 ```mermaid
 flowchart TD
-    A[PR opened against main] --> B[Deployment request issue created<br/>and assigned to the author]
-    B --> C[Sticky PR comment links to the issue]
-    C --> D{Issue complete and date valid?}
-    D -- No --> E[deployment-request/validated fails<br/>merge is blocked]
-    E --> F[Author edits the issue]
-    F --> D
-    D -- Yes --> G[Status turns green<br/>labelled deploy-weekend or deploy-weekday]
-    G --> H[PR merged<br/>merge commit SHA recorded on the issue]
-    H --> I[Daily poller checks open requests]
-    I --> J{Requested date is today?}
-    J -- No --> I
-    J -- Yes --> K{Weekend?}
-    K -- Yes --> L[production-weekend<br/>waits for owner approval]
-    K -- No --> M[production<br/>no gate]
-    L --> N[Approved commit checked out and deployed]
-    M --> N
-    N --> O[Issue commented, labelled deployed, closed]
+    A[PR opened against main] --> B[Sticky PR comment links<br/>to the prefilled request form]
+    B --> C[deployment-request/validated fails<br/>merge is blocked]
+    C --> D[Author submits the form]
+    D --> E{Complete and date valid?}
+    E -- No --> F[Check stays red<br/>issue lists what is missing]
+    F --> G[Author edits the issue]
+    G --> E
+    E -- Yes --> H[Status turns green<br/>labelled deploy-weekend or deploy-weekday]
+    H --> I[PR merged<br/>merge commit SHA recorded on the issue]
+    I --> J[Daily poller checks open requests]
+    J --> K{Requested date is today?}
+    K -- No --> J
+    K -- Yes --> L{Weekend?}
+    L -- Yes --> M[production-weekend<br/>waits for owner approval]
+    L -- No --> N[production<br/>no gate]
+    M --> O[Approved commit checked out and deployed]
+    N --> O
+    O --> P[Issue commented, labelled deployed, closed]
 ```
 
-1. **PR opened against `main`.** `pr-deployment-request.yml` creates a deployment request
-   issue, assigns it to the PR author, and posts a sticky comment on the PR linking straight
-   to it. That comment is the closest thing to the "redirect to the form" behaviour that
-   GitHub permits — see [Limitations](#limitations).
-2. **Merge is blocked until the request is complete.** The commit status
-   `deployment-request/validated` reports failure while the issue is missing a valid future
-   date, a summary, or a rollback plan. The sticky comment lists exactly what is still missing.
-3. **Validation re-runs on every issue edit.** `validate-deployment-request.yml` parses the
-   issue, applies `deploy-weekend` or `deploy-weekday`, and flips the commit status green
-   without needing a new push.
+1. **PR opened against `main`.** `pr-deployment-request.yml` posts a sticky comment on the PR
+   with a prominent link to the deployment request form, with the PR number already filled in.
+   The failing check also points at the form, so *Details* takes the author straight there.
+   This is the closest to a "redirect to the form" that GitHub permits — see
+   [Limitations](#limitations).
+2. **Merge is blocked until the request exists and is complete.** The commit status
+   `deployment-request/validated` reports failure while there is no request, or while it is
+   missing a valid future date, a summary, or a rollback plan.
+3. **Validation runs on submission and on every edit.** `validate-deployment-request.yml`
+   parses the issue, links it to the PR with a `pr-<number>` label, applies `deploy-weekend` or
+   `deploy-weekday`, and flips the commit status green without needing a new push.
 4. **On merge, the merge commit SHA is recorded** as a comment on the issue. This is the exact
-   commit that will later be deployed.
+   commit that will later be deployed. A request closed before deploying is reopened here.
 5. **A daily poller runs the deployment.** `scheduled-deploy.yml` picks up merged, validated
    requests whose date is today and calls `deploy.yml` with the matching environment. Weekend
    deployments pause for approval; weekday deployments proceed.
@@ -57,7 +59,7 @@ flowchart TD
 | `.github/ISSUE_TEMPLATE/deployment-request.yml`   | The deployment request form.                                    |
 | `.github/scripts/deployment-issue.js`             | Issue parsing, date validation and the weekend rule.            |
 | `.github/scripts/deployment-issue.test.js`        | Unit tests for the above.                                       |
-| `.github/workflows/pr-deployment-request.yml`     | Creates the issue, posts the sticky comment, sets the status.    |
+| `.github/workflows/pr-deployment-request.yml`     | Posts the sticky comment, sets the status, records the merge SHA. |
 | `.github/workflows/validate-deployment-request.yml` | Re-validates on edit, labels, deduplicates.                   |
 | `.github/workflows/scheduled-deploy.yml`          | Daily poller that finds deployments due today.                  |
 | `.github/workflows/deploy.yml`                    | Reusable deployment job with the dynamic approval gate.         |
@@ -156,8 +158,8 @@ the SHA recorded at merge time, so a later merge to `main` cannot silently chang
 
 ## Day-to-day use
 
-**As a developer:** open your PR, click the link in the bot comment, fill in the date and the
-details, and merge once the check turns green. To reschedule, edit the issue — validation
+**As a developer:** open your PR, click **Open the deployment request form** in the bot comment,
+submit it, and merge once the check turns green. To reschedule, edit the issue — validation
 re-runs automatically.
 
 **As the approver:** weekend deployments appear as a pending review on the run for the
@@ -188,7 +190,8 @@ Actions tab. Tick `dry_run` to list what is due without deploying anything.
 ## Limitations
 
 - **Nothing can redirect a browser after PR creation.** GitHub Actions cannot navigate the
-  author anywhere, so the sticky comment link is used instead.
+  author anywhere, so the sticky comment and the failing check's *Details* link both point at
+  the prefilled form instead.
 - **`@copilot` cannot approve a deployment.** Environment required reviewers must be users or
   teams with repository access, and the Copilot coding agent is not eligible. This is why
   weekday deployments are ungated rather than approved by `@copilot`.

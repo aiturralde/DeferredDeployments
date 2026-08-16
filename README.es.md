@@ -16,37 +16,41 @@ autorizarlo.
 
 ```mermaid
 flowchart TD
-    A[PR abierta contra main] --> B[Se crea la incidencia de despliegue<br/>y se asigna al autor]
-    B --> C[Comentario fijo en la PR con el enlace]
-    C --> D{¿Incidencia completa y fecha válida?}
-    D -- No --> E[deployment-request/validated falla<br/>la fusión queda bloqueada]
-    E --> F[El autor edita la incidencia]
-    F --> D
-    D -- Sí --> G[El estado pasa a verde<br/>etiqueta deploy-weekend o deploy-weekday]
-    G --> H[PR fusionada<br/>se registra el SHA del commit de fusión]
-    H --> I[El sondeo diario revisa las solicitudes abiertas]
-    I --> J{¿La fecha solicitada es hoy?}
-    J -- No --> I
-    J -- Sí --> K{¿Fin de semana?}
-    K -- Sí --> L[production-weekend<br/>espera la aprobación del propietario]
-    K -- No --> M[production<br/>sin barrera]
-    L --> N[Se descarga y despliega el commit aprobado]
-    M --> N
-    N --> O[Se comenta la incidencia, se etiqueta deployed y se cierra]
+    A[PR abierta contra main] --> B[Comentario fijo en la PR con el enlace<br/>al formulario prerrellenado]
+    B --> C[deployment-request/validated falla<br/>la fusión queda bloqueada]
+    C --> D[El autor envía el formulario]
+    D --> E{¿Completa y fecha válida?}
+    E -- No --> F[La comprobación sigue en rojo<br/>la incidencia indica qué falta]
+    F --> G[El autor edita la incidencia]
+    G --> E
+    E -- Sí --> H[El estado pasa a verde<br/>etiqueta deploy-weekend o deploy-weekday]
+    H --> I[PR fusionada<br/>se registra el SHA del commit de fusión]
+    I --> J[El sondeo diario revisa las solicitudes abiertas]
+    J --> K{¿La fecha solicitada es hoy?}
+    K -- No --> J
+    K -- Sí --> L{¿Fin de semana?}
+    L -- Sí --> M[production-weekend<br/>espera la aprobación del propietario]
+    L -- No --> N[production<br/>sin barrera]
+    M --> O[Se descarga y despliega el commit aprobado]
+    N --> O
+    O --> P[Se comenta la incidencia, se etiqueta deployed y se cierra]
 ```
 
-1. **Se abre una PR contra `main`.** `pr-deployment-request.yml` crea la incidencia de
-   solicitud de despliegue, la asigna al autor de la PR y publica un comentario fijo en la PR
-   que enlaza directamente con ella. Ese comentario es lo más parecido a «redirigir al
-   formulario» que GitHub permite — véase [Limitaciones](#limitaciones).
-2. **La fusión queda bloqueada hasta completar la solicitud.** El estado de commit
-   `deployment-request/validated` falla mientras la incidencia carezca de una fecha futura
-   válida, un resumen o un plan de reversión. El comentario fijo indica exactamente qué falta.
-3. **La validación se repite en cada edición de la incidencia.**
-   `validate-deployment-request.yml` la analiza, aplica `deploy-weekend` o `deploy-weekday` y
-   pone el estado en verde sin necesidad de un nuevo push.
+1. **Se abre una PR contra `main`.** `pr-deployment-request.yml` publica un comentario fijo en
+   la PR con un enlace destacado al formulario de solicitud de despliegue, con el número de la
+   PR ya rellenado. La comprobación en rojo también apunta al formulario, de modo que *Details*
+   lleva directamente allí. Es lo más parecido a «redirigir al formulario» que GitHub permite
+   — véase [Limitaciones](#limitaciones).
+2. **La fusión queda bloqueada hasta que la solicitud exista y esté completa.** El estado de
+   commit `deployment-request/validated` falla mientras no haya solicitud, o mientras le falte
+   una fecha futura válida, un resumen o un plan de reversión.
+3. **La validación se ejecuta al enviar el formulario y en cada edición.**
+   `validate-deployment-request.yml` analiza la incidencia, la vincula a la PR con la etiqueta
+   `pr-<número>`, aplica `deploy-weekend` o `deploy-weekday` y pone el estado en verde sin
+   necesidad de un nuevo push.
 4. **Al fusionar se registra el SHA del commit de fusión** como comentario en la incidencia.
-   Ese es exactamente el commit que se desplegará más adelante.
+   Ese es exactamente el commit que se desplegará más adelante. Si la solicitud se había cerrado
+   antes de desplegarse, aquí se reabre.
 5. **Un sondeo diario ejecuta el despliegue.** `scheduled-deploy.yml` recoge las solicitudes
    fusionadas y validadas cuya fecha sea hoy y llama a `deploy.yml` con el entorno
    correspondiente. Los despliegues de fin de semana se detienen a la espera de aprobación;
@@ -59,7 +63,7 @@ flowchart TD
 | `.github/ISSUE_TEMPLATE/deployment-request.yml`    | El formulario de solicitud de despliegue.                        |
 | `.github/scripts/deployment-issue.js`              | Análisis de la incidencia, validación de fechas y regla de fin de semana. |
 | `.github/scripts/deployment-issue.test.js`         | Pruebas unitarias de lo anterior.                                |
-| `.github/workflows/pr-deployment-request.yml`      | Crea la incidencia, publica el comentario fijo y fija el estado. |
+| `.github/workflows/pr-deployment-request.yml`      | Publica el comentario fijo, fija el estado y registra el SHA de fusión. |
 | `.github/workflows/validate-deployment-request.yml` | Revalida al editar, etiqueta y elimina duplicados.              |
 | `.github/workflows/scheduled-deploy.yml`           | Sondeo diario que localiza los despliegues previstos para hoy.   |
 | `.github/workflows/deploy.yml`                     | Trabajo de despliegue reutilizable con la barrera dinámica.      |
@@ -162,8 +166,8 @@ no puede alterar en silencio lo que se publica.
 
 ## Uso diario
 
-**Como desarrollador:** abre tu PR, pulsa el enlace del comentario del bot, rellena la fecha y
-los detalles, y fusiona cuando la comprobación pase a verde. Para reprogramar, edita la
+**Como desarrollador:** abre tu PR, pulsa **Open the deployment request form** en el comentario
+del bot, envíalo y fusiona cuando la comprobación pase a verde. Para reprogramar, edita la
 incidencia: la validación se repite automáticamente.
 
 **Como aprobador:** los despliegues de fin de semana aparecen como una revisión pendiente en la
@@ -195,7 +199,8 @@ la pestaña Actions. Marca `dry_run` para listar lo que está previsto sin despl
 ## Limitaciones
 
 - **Nada puede redirigir el navegador tras crear la PR.** GitHub Actions no puede llevar al
-  autor a ninguna página, por lo que se usa el enlace del comentario fijo.
+  autor a ninguna página, así que tanto el comentario fijo como el enlace *Details* de la
+  comprobación en rojo apuntan al formulario prerrellenado.
 - **`@copilot` no puede aprobar un despliegue.** Los revisores obligatorios de un entorno deben
   ser usuarios o equipos con acceso al repositorio, y el agente de programación Copilot no es
   elegible. Por eso los despliegues entre semana no tienen barrera en lugar de ser aprobados
