@@ -26,6 +26,8 @@ jobs:
 
       - id: due
         uses: actions/github-script@v7
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
         with:
           script: |
             const lib = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/deployment-issue.js`);
@@ -39,7 +41,8 @@ jobs:
             const due = [];
             for (const issue of issues) {
               const names = issue.labels.map(l => l.name || l);
-              if (names.includes('pending-details') || names.includes('deployed')) continue;
+              // `deploying` means a run already exists for this request, possibly still awaiting approval.
+              if (names.includes('pending-details') || names.includes('deployed') || names.includes('deploying')) continue;
 
               const check = lib.validateRequest(issue.body, today);
               if (!check.valid || check.date.date !== today) continue;
@@ -60,6 +63,20 @@ jobs:
                 environment: check.date.environment,
                 deploy_date: check.date.date,
               });
+            }
+
+            const dryRun = process.env.DRY_RUN === 'true';
+            if (!dryRun) {
+              const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+              for (const item of due) {
+                await github.rest.issues.addLabels({
+                  owner, repo, issue_number: item.issue_number, labels: ['deploying'],
+                });
+                await github.rest.issues.createComment({
+                  owner, repo, issue_number: item.issue_number,
+                  body: lib.renderRunRecord(item.deploy_date, context.runId, runUrl),
+                });
+              }
             }
 
             core.summary.addHeading(`Deployments due on ${today}`, 3);

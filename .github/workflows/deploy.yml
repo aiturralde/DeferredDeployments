@@ -80,6 +80,12 @@ jobs:
                 : `Deployment of \`${sha}\` to \`${environment}\` **failed**. [View run](${run})`,
             });
 
+            try {
+              await github.rest.issues.removeLabel({ owner, repo, issue_number, name: 'deploying' });
+            } catch (error) {
+              if (error.status !== 404) throw error;
+            }
+
             await github.rest.issues.addLabels({
               owner, repo, issue_number, labels: [success ? 'deployed' : 'deployment-failed'],
             });

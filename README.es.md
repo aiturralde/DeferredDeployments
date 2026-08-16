@@ -53,8 +53,9 @@ flowchart TD
    antes de desplegarse, aquí se reabre.
 5. **Un sondeo diario ejecuta el despliegue.** `scheduled-deploy.yml` recoge las solicitudes
    fusionadas y validadas cuya fecha sea hoy y llama a `deploy.yml` con el entorno
-   correspondiente. Los despliegues de fin de semana se detienen a la espera de aprobación;
-   los de días laborables continúan.
+   correspondiente. Antes etiqueta cada una como `deploying`, de modo que una solicitud con una
+   ejecución ya en curso nunca se despacha dos veces. Los despliegues de fin de semana se
+   detienen a la espera de aprobación; los de días laborables continúan.
 
 ## Estructura del repositorio
 
@@ -64,7 +65,7 @@ flowchart TD
 | `.github/scripts/deployment-issue.js`              | Análisis de la incidencia, validación de fechas y regla de fin de semana. |
 | `.github/scripts/deployment-issue.test.js`         | Pruebas unitarias de lo anterior.                                |
 | `.github/workflows/pr-deployment-request.yml`      | Publica el comentario fijo, fija el estado y registra el SHA de fusión. |
-| `.github/workflows/validate-deployment-request.yml` | Revalida al editar, etiqueta y elimina duplicados.              |
+| `.github/workflows/validate-deployment-request.yml` | Revalida al editar, etiqueta, elimina duplicados y cancela ejecuciones obsoletas. |
 | `.github/workflows/scheduled-deploy.yml`           | Sondeo diario que localiza los despliegues previstos para hoy.   |
 | `.github/workflows/deploy.yml`                     | Trabajo de despliegue reutilizable con la barrera dinámica.      |
 | `.github/workflows/tests.yml`                      | Ejecuta las pruebas unitarias.                                   |
@@ -78,10 +79,12 @@ automatización lo importan, de modo que la regla de fin de semana no puede dive
 | Exportación       | Comportamiento                                                                              |
 | ----------------- | ------------------------------------------------------------------------------------------- |
 | `parseIssue`      | Convierte el cuerpo del formulario en un mapa de campos, tratando `_No response_` como vacío. |
-| `renderBody`      | Genera un cuerpo con los mismos encabezados, para las incidencias creadas automáticamente.   |
+| `renderBody`      | Renderizado de referencia del formulario. Lo usan las pruebas para construir cuerpos.        |
 | `todayInTz`       | La fecha de hoy en `Europe/Madrid`.                                                          |
 | `classify`        | Valida una fecha y devuelve `isWeekend`, el entorno de destino y la etiqueta.                |
 | `validateRequest` | Comprobación completa de una solicitud; devuelve todos los problemas a la vez.               |
+| `renderRunRecord` | Comentario que registra qué ejecución se despachó y para qué fecha.                          |
+| `parseRunRecord`  | Vuelve a leer ese comentario, para poder cancelar una ejecución obsoleta.                    |
 
 Una fecha se rechaza si no tiene el formato `YYYY-MM-DD`, si no es una fecha real del
 calendario (`2026-02-31`) o si está en el pasado.
@@ -108,8 +111,9 @@ Las etiquetas se crean automáticamente la primera vez que se aplican.
 | `deploy-weekend`     | La fecha cae en sábado o domingo.                                        |
 | `deploy-weekday`     | La fecha cae de lunes a viernes.                                         |
 | `merged`             | La PR está fusionada y el SHA del commit está registrado.                |
+| `deploying`          | Hay una ejecución despachada, quizá aún esperando aprobación. Impide un segundo despacho. |
 | `deployed`           | El despliegue tuvo éxito; la incidencia se cierra.                       |
-| `deployment-failed`  | El despliegue se ejecutó pero falló.                                     |
+| `deployment-failed`  | El despliegue se ejecutó pero falló. La incidencia sigue abierta.        |
 
 ## Configuración inicial
 
@@ -167,8 +171,13 @@ no puede alterar en silencio lo que se publica.
 ## Uso diario
 
 **Como desarrollador:** abre tu PR, pulsa **Open the deployment request form** en el comentario
-del bot, envíalo y fusiona cuando la comprobación pase a verde. Para reprogramar, edita la
-incidencia: la validación se repite automáticamente.
+del bot, envíalo y fusiona cuando la comprobación pase a verde.
+
+**Reprogramar:** edita la incidencia y cambia la fecha. La validación se repite en cada edición,
+así que las etiquetas y el estado de commit se actualizan al momento y el sondeo usará la nueva
+fecha. Si ya se había despachado una ejecución para la fecha anterior — incluida una que siga
+esperando aprobación — se cancela y se retira la etiqueta `deploying`, de modo que el mismo
+commit nunca se despliega dos veces.
 
 **Como aprobador:** los despliegues de fin de semana aparecen como una revisión pendiente en la
 ejecución del entorno `production-weekend` la mañana de la fecha solicitada. Apruébalos ahí.
@@ -193,6 +202,7 @@ la pestaña Actions. Marca `dry_run` para listar lo que está previsto sin despl
 | La comprobación sigue en rojo tras corregir la incidencia | El campo `pr` no corresponde a un número de PR real, así que el estado no puede publicarse. |
 | No aparece ninguna incidencia ni comentario en la PR  | La PR procede de un fork, que solo recibe un token de solo lectura.                       |
 | Se omite un despliegue previsto                       | La incidencia no tiene un SHA de fusión registrado: la PR no se fusionó, o se fusionó antes de existir estos flujos. |
+| Una solicitud nunca despliega y conserva `deploying`  | Su ejecución sigue esperando aprobación, o se canceló desde la pestaña Actions sin editar la incidencia. Quita la etiqueta para que el sondeo vuelva a despacharla. |
 | La ejecución programada no arranca                    | El cron de GitHub no garantiza la hora y puede retrasarse; los flujos programados se desactivan tras 60 días de inactividad. |
 | Existen dos incidencias para una misma PR             | Es lo esperado si también se rellenó el formulario a mano. La más reciente se cierra como duplicada automáticamente. |
 
