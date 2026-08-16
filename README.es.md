@@ -137,19 +137,28 @@ request con una aprobación y la comprobación `deployment-request/validated`. L
 configurarse a mano en Settings → Rules → Rulesets.
 
 El archivo es un registro de la configuración deseada, no un vínculo activo: GitHub no lo lee
-desde el repositorio. Si lo editas, vuelve a aplicarlo con `PUT .../rulesets/<id>`, usando el id
-que devuelve el comando anterior.
+desde el repositorio. Actualmente está aplicado como el ruleset
+[`20913989`](https://github.com/aiturralde/DeferredDeployments/rules/20913989). Si lo editas,
+vuelve a aplicarlo con:
+
+```bash
+gh api --method PUT repos/aiturralde/DeferredDeployments/rulesets/20913989 --input .github/ruleset.json
+```
 
 > Mientras no exista el conjunto de reglas, la solicitud de despliegue es solo informativa: la
 > comprobación se publica, pero nada impide la fusión.
 
-> El ruleset no tiene lista de excepciones, así que también te afecta a ti. Añade *Repository
-> admin* a la **Bypass list** desde la interfaz web si quieres una vía de escape de emergencia.
+> El ruleset no tiene lista de excepciones, así que también afecta al propietario del
+> repositorio. Como GitHub no permite aprobar tu propia pull request, **cada fusión a `main`
+> necesita la aprobación de una segunda persona**. Para trabajar en solitario, pon
+> `required_approving_review_count` a `0` y vuelve a aplicar el ruleset, o añade *Repository
+> admin* a la **Bypass list** desde la interfaz web.
 
-**Comandos de despliegue** — `deploy.yml` ejecuta actualmente un paso `Deploy` de marcador de
-posición. Sustitúyelo por los comandos reales. El trabajo ya verifica que el commit descargado
-coincide con el SHA registrado al fusionar, de modo que una fusión posterior a `main` no puede
-alterar en silencio lo que se publica.
+**Comandos de despliegue** — este repositorio es una **demo**: el paso `Deploy` de `deploy.yml`
+solo escribe un aviso de éxito en el registro de la ejecución, no despliega nada. Para hacerlo
+real, sustituye ese paso por los comandos correspondientes. El trabajo ya verifica que el commit
+descargado coincide con el SHA registrado al fusionar, de modo que una fusión posterior a `main`
+no puede alterar en silencio lo que se publica.
 
 ## Uso diario
 
